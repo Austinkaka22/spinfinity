@@ -18,6 +18,16 @@ type InvoiceRow = {
   created_at: string;
   status: string;
   branch_id: string;
+  branches:
+    | {
+        name: string;
+        phone_number: string | null;
+      }
+    | Array<{
+        name: string;
+        phone_number: string | null;
+      }>
+    | null;
 };
 
 type InvoiceLineRow = {
@@ -42,7 +52,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const query = supabase
     .from("orders")
     .select(
-      "id,invoice_number,customer_name,customer_phone,subtotal,discount_amount,total_amount,created_at,status,branch_id",
+      "id,invoice_number,customer_name,customer_phone,subtotal,discount_amount,total_amount,created_at,status,branch_id,branches(name,phone_number)",
     )
     .eq("id", id);
 
@@ -57,6 +67,7 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const invoice = invoiceData as InvoiceRow;
+  const branch = Array.isArray(invoice.branches) ? invoice.branches[0] : invoice.branches;
 
   const { data: linesData } = await supabase
     .from("order_lines")
@@ -103,6 +114,10 @@ export async function GET(_request: Request, context: RouteContext) {
   page.drawText(`Customer: ${invoice.customer_name}`, { x, y, size: 10, font });
   y -= 15;
   page.drawText(`Phone: ${invoice.customer_phone ?? "-"}`, { x, y, size: 10, font });
+  y -= 15;
+  page.drawText(`Branch: ${branch?.name ?? invoice.branch_id}`, { x, y, size: 10, font });
+  y -= 15;
+  page.drawText(`Branch Phone: ${branch?.phone_number ?? "-"}`, { x, y, size: 10, font });
   y -= 20;
 
   page.drawText("Lines", { x, y, size: 12, font: boldFont });

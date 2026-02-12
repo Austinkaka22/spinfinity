@@ -33,6 +33,12 @@ type OrderLineRow = {
   items: { name: string } | Array<{ name: string }> | null;
 };
 
+type BranchRow = {
+  id: string;
+  name: string;
+  phone_number: string | null;
+};
+
 export default async function InvoiceDetailPage({ params }: InvoiceDetailPageProps) {
   const session = await requireRole("staff");
   const { id } = await params;
@@ -57,7 +63,14 @@ export default async function InvoiceDetailPage({ params }: InvoiceDetailPagePro
     .eq("order_id", id)
     .order("created_at", { ascending: true });
 
+  const { data: branchData } = await supabase
+    .from("branches")
+    .select("id,name,phone_number")
+    .eq("id", session.branchId)
+    .maybeSingle();
+
   const order = orderData as OrderRow;
+  const branch = branchData as BranchRow | null;
   const lines = ((linesData ?? []) as unknown as OrderLineRow[]).map((line) => {
     const itemName = Array.isArray(line.items)
       ? (line.items[0]?.name ?? null)
@@ -113,7 +126,12 @@ export default async function InvoiceDetailPage({ params }: InvoiceDetailPagePro
               {order.customer_email ?? "-"}
             </p>
             <p>
-              <span className="font-medium text-slate-700">Branch:</span> {session.branchId}
+              <span className="font-medium text-slate-700">Branch:</span>{" "}
+              {branch?.name ?? session.branchId}
+            </p>
+            <p>
+              <span className="font-medium text-slate-700">Branch Phone:</span>{" "}
+              {branch?.phone_number ?? "-"}
             </p>
           </div>
 

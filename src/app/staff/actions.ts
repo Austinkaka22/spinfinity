@@ -3,10 +3,12 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth/guards";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   computeLine,
   computeTotals,
+  type ComputedInvoiceLine,
   type InvoiceDraftLine,
   type PricingRateRecord,
 } from "@/lib/invoices/pricing";
@@ -35,7 +37,7 @@ export async function createInvoiceAction(formData: FormData) {
 
   const customerName = textValue(formData, "customer_name");
   const customerPhone = textValue(formData, "customer_phone");
-  const customerEmail = textValue(formData, "customer_email");
+  const customerEmail = textValue(formData, "customer_email").toLowerCase();
   const notes = textValue(formData, "notes");
   const discountAmount = numberOrNull(textValue(formData, "discount_amount")) ?? 0;
 
@@ -79,13 +81,20 @@ export async function createInvoiceAction(formData: FormData) {
   const rates = (ratesData ?? []) as PricingRateRecord[];
   const rateById = new Map(rates.map((rate) => [rate.id, rate]));
 
-  const computedLines = drafts.map((draft) => {
-    const rate = rateById.get(draft.pricingRateId);
-    if (!rate) {
-      throw new Error("Invalid pricing rate selected.");
-    }
-    return computeLine(draft, rate);
-  });
+  let computedLines: ComputedInvoiceLine[];
+  try {
+    computedLines = drafts.map((draft) => {
+      const rate = rateById.get(draft.pricingRateId);
+      if (!rate) {
+        throw new Error("Invalid pricing rate selected.");
+      }
+      return computeLine(draft, rate);
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Invalid invoice line values.";
+    redirect(`/staff?error=${encodeURIComponent(message)}`);
+  }
 
   const totals = computeTotals(
     computedLines.map((line) => line.lineTotal),
@@ -101,6 +110,19 @@ export async function createInvoiceAction(formData: FormData) {
   }
 
   const invoiceNumber = String(invoiceData);
+  let customerId: string | null = null;
+
+  if (customerEmail) {
+    const adminClient = createSupabaseAdminClient();
+    const { data: customerProfile } = await adminClient
+      .from("profiles")
+      .select("id")
+      .eq("role", "customer")
+      .ilike("email", customerEmail)
+      .maybeSingle();
+
+    customerId = customerProfile?.id ?? null;
+  }
 
   const { data: orderRow, error: orderError } = await supabase
     .from("orders")
@@ -108,6 +130,7 @@ export async function createInvoiceAction(formData: FormData) {
       invoice_number: invoiceNumber,
       branch_id: session.branchId,
       created_by: session.userId,
+      customer_id: customerId,
       customer_name: customerName,
       customer_phone: customerPhone || null,
       customer_email: customerEmail || null,

@@ -29,17 +29,18 @@ export async function getSessionContext(): Promise<PortalContext | null> {
 
 export async function requireRole(requiredRole: AppRole): Promise<PortalContext> {
   const session = await getSessionContext();
+  const loginPath = requiredRole === "customer" ? "/customer/login" : "/staff-login";
 
   if (!session) {
-    redirect("/sign-in?error=missing_role");
+    redirect(`${loginPath}?error=missing_role`);
   }
 
   if (session.role !== requiredRole) {
-    redirect(getRoleHome(session.role) ?? "/sign-in?error=missing_role");
+    redirect(getRoleHome(session.role) ?? `${loginPath}?error=missing_role`);
   }
 
   if (requiredRole === "staff" && !session.branchId) {
-    redirect("/sign-in?error=missing_branch");
+    redirect("/staff-login?error=missing_branch");
   }
 
   return session;

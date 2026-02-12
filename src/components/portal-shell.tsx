@@ -15,6 +15,7 @@ const ROLE_NAV: Record<AppRole, Array<{ href: string; label: string }>> = {
   admin: [{ href: "/admin", label: "Dashboard" }],
   staff: [{ href: "/staff", label: "POS Workspace" }],
   driver: [{ href: "/driver", label: "Delivery Queue" }],
+  customer: [{ href: "/customer", label: "My Portal" }],
 };
 
 export function PortalShell({
