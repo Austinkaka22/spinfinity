@@ -121,7 +121,7 @@ export async function fetchAdminMasterData() {
 export async function fetchAdminInventoryData() {
   const supabase = createSupabaseAdminClient();
 
-  const [branchesRes, levelsRes, storageRes, logsRes] = await Promise.all([
+  const [branchesRes, levelsRes, storageRes, logsRes, suppliersRes, requestsRes] = await Promise.all([
     supabase
       .from("branches")
       .select("id,code,name,branch_type,status")
@@ -132,6 +132,13 @@ export async function fetchAdminInventoryData() {
     supabase
       .from("branch_restock_logs")
       .select("id,branch_id,supply_item,quantity,source_type,note,created_at")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase.from("suppliers").select("*").eq("is_active", true).order("company_name"),
+    supabase
+      .from("branch_supply_requests")
+      .select("id,branch_id,supply_item,quantity,status,note,created_at")
+      .in("status", ["pending", "approved"])
       .order("created_at", { ascending: false })
       .limit(20),
   ]);
@@ -174,6 +181,13 @@ export async function fetchAdminInventoryData() {
   const branchNameById = new Map<string, string>();
   branches.forEach((branch) => branchNameById.set(branch.id, branch.name));
 
+  const branchRequests = ((requestsRes.data ?? []) as Array<Omit<BranchSupplyRequest, "branchName">>).map(
+    (request) => ({
+      ...request,
+      branchName: branchNameById.get(request.branch_id) ?? "Unknown branch",
+    }),
+  );
+
   return {
     branches,
     hubBranches: branches.filter((branch) => branch.branch_type === "hub"),
@@ -182,9 +196,77 @@ export async function fetchAdminInventoryData() {
     ),
     storageLaundryBagLevel: laundryBagStorageLevel?.quantity ?? 0,
     storageHangerLevel: hangerStorageLevel?.quantity ?? 0,
+    storageByItem: {
+      laundry_bag: Number(laundryBagStorageLevel?.quantity ?? 0),
+      hanger: Number(hangerStorageLevel?.quantity ?? 0),
+    },
+    suppliers: (suppliersRes.data ?? []) as Supplier[],
+    branchRequests,
     restockLogs: restockLogs.map((log) => ({
       ...log,
       branchName: branchNameById.get(log.branch_id) ?? "Unknown branch",
     })),
+  };
+}
+
+export type Supplier = {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type BranchSupplyRequest = {
+  id: string;
+  branch_id: string;
+  supply_item: "hanger" | "laundry_bag";
+  quantity: number;
+  status: "pending" | "approved" | "fulfilled" | "rejected" | "cancelled";
+  note: string | null;
+  created_at: string;
+  branchName: string;
+};
+
+export type FinanceAccount = {
+  id: string;
+  name: string;
+  type: "cash" | "mpesa" | "bank";
+  is_active: boolean;
+};
+
+export type FinanceBalance = {
+  account_id: string;
+  name: string;
+  type: "cash" | "mpesa" | "bank";
+  balance: number;
+};
+
+export async function fetchAdminSuppliers() {
+  const supabase = createSupabaseAdminClient();
+  const res = await supabase.from("suppliers").select("*").order("created_at", { ascending: false });
+  return (res.data ?? []) as Supplier[];
+}
+
+export async function fetchAdminFinancesData() {
+  const supabase = createSupabaseAdminClient();
+  const [accountsRes, balancesRes, txnsRes, suppliersRes] = await Promise.all([
+    supabase.from("finance_accounts").select("*").order("name"),
+    supabase.from("v_finance_account_balances").select("*"),
+    supabase
+      .from("finance_transactions")
+      .select("id,txn_type,direction,amount,category,note,created_at,finance_accounts(name)")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase.from("suppliers").select("id,company_name,is_active").eq("is_active", true).order("company_name"),
+  ]);
+
+  return {
+    accounts: (accountsRes.data ?? []) as FinanceAccount[],
+    balances: ((balancesRes.data ?? []) as FinanceBalance[]).map((row) => ({ ...row, balance: Number(row.balance) })),
+    transactions: (txnsRes.data ?? []) as Array<Record<string, unknown>>,
+    activeSuppliers: (suppliersRes.data ?? []) as Array<Pick<Supplier, "id" | "company_name" | "is_active">>,
   };
 }

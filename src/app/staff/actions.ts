@@ -169,3 +169,35 @@ export async function createInvoiceAction(formData: FormData) {
   revalidatePath("/staff");
   redirect(`/staff/invoices/${orderRow.id}`);
 }
+
+export async function createBranchSupplyRequestAction(formData: FormData) {
+  const session = await requireRole("staff");
+  const supabase = await createServerSupabaseClient();
+
+  const supplyItem = textValue(formData, "supply_item");
+  const quantity = Number.parseInt(textValue(formData, "quantity"), 10);
+  const note = textValue(formData, "note");
+
+  if (supplyItem !== "hanger" && supplyItem !== "laundry_bag") {
+    redirect("/staff?error=Only%20hangers%20or%20laundry%20bags%20are%20requestable");
+  }
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    redirect("/staff?error=Quantity%20must%20be%20greater%20than%20zero");
+  }
+
+  const { error } = await supabase.from("branch_supply_requests").insert({
+    branch_id: session.branchId,
+    supply_item: supplyItem,
+    quantity,
+    note: note || null,
+    requested_by: session.userId,
+  });
+
+  if (error) {
+    redirect(`/staff?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath("/staff");
+  redirect("/staff");
+}

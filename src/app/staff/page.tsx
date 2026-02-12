@@ -2,7 +2,7 @@ import Link from "next/link";
 import { InvoiceBuilder, type BuilderItem } from "@/components/invoice-builder";
 import { PortalShell } from "@/components/portal-shell";
 import { requireRole } from "@/lib/auth/guards";
-import { createInvoiceAction } from "@/app/staff/actions";
+import { createBranchSupplyRequestAction, createInvoiceAction } from "@/app/staff/actions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type StaffPageProps = {
@@ -29,7 +29,7 @@ export default async function StaffPage({ searchParams }: StaffPageProps) {
   const params = (await searchParams) ?? {};
   const error = readParam(params.error);
 
-  const [itemsRes, ratesRes, ordersRes] = await Promise.all([
+  const [itemsRes, ratesRes, ordersRes, requestsRes] = await Promise.all([
     supabase.from("items").select("id,name").eq("is_active", true).order("name"),
     supabase
       .from("pricing_rates")
@@ -43,6 +43,12 @@ export default async function StaffPage({ searchParams }: StaffPageProps) {
       .eq("branch_id", session.branchId)
       .order("created_at", { ascending: false })
       .limit(20),
+    supabase
+      .from("branch_supply_requests")
+      .select("id,supply_item,quantity,status,created_at,note")
+      .eq("branch_id", session.branchId)
+      .order("created_at", { ascending: false })
+      .limit(10),
   ]);
 
   const items = (itemsRes.data ?? []) as BuilderItem[];
@@ -70,6 +76,7 @@ export default async function StaffPage({ searchParams }: StaffPageProps) {
   };
   });
   const orders = (ordersRes.data ?? []) as RecentOrder[];
+  const requests = (requestsRes.data ?? []) as Array<{ id: string; supply_item: "hanger" | "laundry_bag"; quantity: number; status: string; created_at: string; note: string | null }>;
 
   return (
     <PortalShell
@@ -126,6 +133,30 @@ export default async function StaffPage({ searchParams }: StaffPageProps) {
               Create Invoice
             </button>
           </form>
+        </section>
+
+
+
+        <section className="rounded-xl border border-slate-200 p-4">
+          <h2 className="text-lg font-semibold text-slate-900">Request Hangers / Laundry Bags</h2>
+          <form action={createBranchSupplyRequestAction} className="mt-3 grid gap-2 md:grid-cols-4">
+            <select name="supply_item" className="rounded-md border border-slate-300 px-3 py-2 text-sm">
+              <option value="hanger">Hanger</option>
+              <option value="laundry_bag">Laundry Bag</option>
+            </select>
+            <input name="quantity" type="number" min={1} step={1} required className="rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Quantity" />
+            <input name="note" className="rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Note (optional)" />
+            <button className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white">Submit Request</button>
+          </form>
+          <div className="mt-3 space-y-2">
+            {requests.length === 0 ? <p className="text-sm text-slate-600">No supply requests yet.</p> : requests.map((request) => (
+              <div key={request.id} className="rounded-md border border-slate-200 p-3 text-sm">
+                <p className="font-medium text-slate-900">{request.supply_item === "hanger" ? "Hanger" : "Laundry Bag"} • Qty {request.quantity}</p>
+                <p className="text-xs text-slate-600">Status: {request.status} • {new Date(request.created_at).toLocaleString()}</p>
+                {request.note ? <p className="text-xs text-slate-600">{request.note}</p> : null}
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="rounded-xl border border-slate-200 p-4">

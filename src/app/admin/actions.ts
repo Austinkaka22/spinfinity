@@ -46,6 +46,14 @@ async function requireAdmin() {
 function refreshAdminPortal() {
   const paths = [
     "/admin",
+    "/admin/registry/branches",
+    "/admin/registry/staff",
+    "/admin/registry/items",
+    "/admin/registry/customers",
+    "/admin/supplies/suppliers",
+    "/admin/supplies/inventory",
+    "/admin/finance/pricing",
+    "/admin/finance/finances",
     "/admin/branches",
     "/admin/staff",
     "/admin/items",
@@ -523,5 +531,257 @@ export async function restockBranchFromStorageAction(formData: FormData) {
     throw new Error(error.message);
   }
 
+  refreshAdminPortal();
+}
+
+function toMoney(value: string): number {
+  const normalized = Number.parseFloat(value);
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    throw new Error("Amount must be greater than zero");
+  }
+  return normalized;
+}
+
+export async function createSupplierAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+
+  const companyName = readField(formData, "company_name");
+  if (!companyName) throw new Error("Company name is required");
+
+  const { error } = await supabase.from("suppliers").insert({
+    company_name: companyName,
+    contact_name: toNullable(readField(formData, "contact_name")),
+    phone: toNullable(readField(formData, "phone")),
+    email: toNullable(readField(formData, "email")),
+  });
+
+  if (error) throw new Error(error.message);
+  refreshAdminPortal();
+}
+
+export async function updateSupplierAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  const id = readField(formData, "id");
+  if (!id) throw new Error("Supplier is required");
+
+  const { error } = await supabase.from("suppliers").update({
+    company_name: readField(formData, "company_name"),
+    contact_name: toNullable(readField(formData, "contact_name")),
+    phone: toNullable(readField(formData, "phone")),
+    email: toNullable(readField(formData, "email")),
+    is_active: toBoolean(readField(formData, "is_active")),
+  }).eq("id", id);
+
+  if (error) throw new Error(error.message);
+  refreshAdminPortal();
+}
+
+export async function receiveToStorageAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+
+  const supplierId = readField(formData, "supplier_id");
+  const item = normalizeSupplyItem(readField(formData, "supply_item"));
+  const quantity = toPositiveNumber(readField(formData, "quantity"));
+  const unitCostInput = toNullable(readField(formData, "unit_cost"));
+  const note = toNullable(readField(formData, "note"));
+
+  if (!supplierId) throw new Error("Supplier is required");
+  if (item !== "hanger" && item !== "laundry_bag") throw new Error("Invalid storage item");
+
+  const unitCost = unitCostInput ? toMoney(unitCostInput) : null;
+  const totalCost = unitCost != null ? Number((unitCost * quantity).toFixed(2)) : null;
+
+  const { data: receipt, error: receiptError } = await supabase.from("storage_receipts").insert({
+    supplier_id: supplierId,
+    supply_item: item,
+    quantity,
+    unit_cost: unitCost,
+    total_cost: totalCost,
+    note,
+  }).select("id").single();
+  if (receiptError || !receipt) throw new Error(receiptError?.message ?? "Failed to save receipt");
+
+  const { data: currentStorage } = await supabase.from("storage_supply_levels").select("quantity").eq("supply_item", item).maybeSingle();
+  const nextQty = Number(currentStorage?.quantity ?? 0) + Math.trunc(quantity);
+
+  const { error: storageError } = await supabase.from("storage_supply_levels").upsert({
+    supply_item: item,
+    quantity: nextQty,
+  }, { onConflict: "supply_item" });
+  if (storageError) throw new Error(storageError.message);
+
+  await supabase.from("supply_movements").insert({
+    movement_type: "RECEIVE_TO_STORAGE",
+    supply_item: item,
+    qty_change: quantity,
+    from_location: "supplier",
+    to_location: "storage",
+    supplier_id: supplierId,
+    related_table: "storage_receipts",
+    related_id: receipt.id,
+    note,
+  });
+
+  refreshAdminPortal();
+}
+
+export async function branchRestockAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+
+  const branchId = readField(formData, "branch_id");
+  const item = normalizeSupplyItem(readField(formData, "supply_item"));
+  const quantity = Math.trunc(toPositiveNumber(readField(formData, "quantity")));
+  const note = toNullable(readField(formData, "note"));
+  const requestId = toNullable(readField(formData, "request_id"));
+
+  if (!branchId) throw new Error("Branch is required");
+  if (item !== "hanger" && item !== "laundry_bag") throw new Error("Only hanger and laundry bag can move from storage");
+
+  const { data: storage, error: storageReadError } = await supabase
+    .from("storage_supply_levels")
+    .select("quantity")
+    .eq("supply_item", item)
+    .single();
+  if (storageReadError) throw new Error(storageReadError.message);
+  const available = Number(storage.quantity);
+  if (quantity > available) throw new Error("Quantity exceeds available storage stock");
+
+  const { error: storageUpdateError } = await supabase
+    .from("storage_supply_levels")
+    .update({ quantity: available - quantity })
+    .eq("supply_item", item);
+  if (storageUpdateError) throw new Error(storageUpdateError.message);
+
+  const { data: branchLevel } = await supabase
+    .from("branch_supply_levels")
+    .select("quantity")
+    .eq("branch_id", branchId)
+    .eq("supply_item", item)
+    .maybeSingle();
+
+  const nextBranchQty = Number(branchLevel?.quantity ?? 0) + quantity;
+  const { error: branchUpdateError } = await supabase.from("branch_supply_levels").upsert({
+    branch_id: branchId,
+    supply_item: item,
+    quantity: nextBranchQty,
+  }, { onConflict: "branch_id,supply_item" });
+  if (branchUpdateError) throw new Error(branchUpdateError.message);
+
+  const { data: restockLog, error: logError } = await supabase.from("branch_restock_logs").insert({
+    branch_id: branchId,
+    supply_item: item,
+    quantity,
+    source_type: "storage",
+    note,
+    related_request_id: requestId,
+  }).select("id").single();
+
+  if (logError || !restockLog) throw new Error(logError?.message ?? "Failed to log restock");
+
+  await supabase.from("supply_movements").insert({
+    movement_type: "TRANSFER_TO_BRANCH",
+    supply_item: item,
+    qty_change: -quantity,
+    from_location: "storage",
+    to_location: `branch:${branchId}`,
+    branch_id: branchId,
+    related_table: "branch_restock_logs",
+    related_id: restockLog.id,
+    note,
+  });
+
+  if (requestId) {
+    await supabase.from("branch_supply_requests").update({
+      status: "fulfilled",
+      actioned_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+    }).eq("id", requestId);
+  }
+
+  refreshAdminPortal();
+}
+
+export async function rejectBranchSupplyRequestAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  const requestId = readField(formData, "request_id");
+  if (!requestId) throw new Error("Request id is required");
+
+  await supabase.from("branch_supply_requests").update({
+    status: "rejected",
+    note: toNullable(readField(formData, "note")),
+    actioned_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+  }).eq("id", requestId);
+
+  refreshAdminPortal();
+}
+
+export async function createFinanceAccountAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  const name = readField(formData, "name");
+  const type = readField(formData, "type");
+  if (!name) throw new Error("Account name is required");
+
+  await supabase.from("finance_accounts").insert({ name, type, is_active: toBoolean(readField(formData, "is_active")) });
+  refreshAdminPortal();
+}
+
+export async function updateFinanceAccountAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  const id = readField(formData, "id");
+  await supabase.from("finance_accounts").update({
+    name: readField(formData, "name"),
+    type: readField(formData, "type"),
+    is_active: toBoolean(readField(formData, "is_active")),
+  }).eq("id", id);
+  refreshAdminPortal();
+}
+
+export async function createFinanceReceiveAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  await supabase.from("finance_transactions").insert({
+    txn_type: "receive",
+    direction: "in",
+    account_id: readField(formData, "account_id"),
+    amount: toMoney(readField(formData, "amount")),
+    note: toNullable(readField(formData, "note")),
+  });
+  refreshAdminPortal();
+}
+
+export async function createFinanceExpenseAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  const category = readField(formData, "category");
+  if (!category) throw new Error("Category is required");
+
+  await supabase.from("finance_transactions").insert({
+    txn_type: "expense",
+    direction: "out",
+    account_id: readField(formData, "account_id"),
+    amount: toMoney(readField(formData, "amount")),
+    category,
+    supplier_id: toNullable(readField(formData, "supplier_id")),
+    note: toNullable(readField(formData, "note")),
+  });
+  refreshAdminPortal();
+}
+
+export async function createFinanceAdjustmentAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+  await supabase.from("finance_transactions").insert({
+    txn_type: "adjustment",
+    direction: readField(formData, "direction") === "out" ? "out" : "in",
+    account_id: readField(formData, "account_id"),
+    amount: toMoney(readField(formData, "amount")),
+    note: toNullable(readField(formData, "note")),
+  });
   refreshAdminPortal();
 }

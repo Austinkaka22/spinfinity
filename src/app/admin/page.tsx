@@ -6,12 +6,12 @@ export default async function AdminPage() {
     await fetchAdminMasterData();
 
   const cards = [
-    { title: "Branches", value: branches.length, href: "/admin/branches" },
-    { title: "Staff", value: profiles.length, href: "/admin/staff" },
-    { title: "Items", value: items.length, href: "/admin/items" },
-    { title: "Inventory", value: "Manage", href: "/admin/inventory" },
-    { title: "Pricing Records", value: categories.length + rates.length, href: "/admin/pricing" },
-    { title: "Customers", value: "View", href: "/admin/customers" },
+    { title: "Branches", value: branches.length, href: "/admin/registry/branches" },
+    { title: "Staff", value: profiles.length, href: "/admin/registry/staff" },
+    { title: "Items", value: items.length, href: "/admin/registry/items" },
+    { title: "Inventory", value: "Manage", href: "/admin/supplies/inventory" },
+    { title: "Pricing Records", value: categories.length + rates.length, href: "/admin/finance/pricing" },
+    { title: "Customers", value: "View", href: "/admin/registry/customers" },
     { title: "Reports", value: "Build", href: "/admin/reports" },
   ] as const;
 
