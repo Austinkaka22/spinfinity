@@ -584,21 +584,18 @@ export async function receiveToStorageAction(formData: FormData) {
 
   const supplierId = readField(formData, "supplier_id");
   const item = normalizeSupplyItem(readField(formData, "supply_item"));
-  const quantity = toPositiveNumber(readField(formData, "quantity"));
-  const unitCostInput = toNullable(readField(formData, "unit_cost"));
+  const quantity = Math.trunc(toPositiveNumber(readField(formData, "quantity")));
+  const totalCost = toMoney(readField(formData, "total_cost"));
   const note = toNullable(readField(formData, "note"));
 
   if (!supplierId) throw new Error("Supplier is required");
   if (item !== "hanger" && item !== "laundry_bag") throw new Error("Invalid storage item");
 
-  const unitCost = unitCostInput ? toMoney(unitCostInput) : null;
-  const totalCost = unitCost != null ? Number((unitCost * quantity).toFixed(2)) : null;
-
   const { data: receipt, error: receiptError } = await supabase.from("storage_receipts").insert({
     supplier_id: supplierId,
     supply_item: item,
     quantity,
-    unit_cost: unitCost,
+    unit_cost: null,
     total_cost: totalCost,
     note,
   }).select("id").single();
@@ -628,6 +625,72 @@ export async function receiveToStorageAction(formData: FormData) {
   refreshAdminPortal();
 }
 
+export async function receiveToBranchAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+
+  const branchId = readField(formData, "branch_id");
+  const supplierId = readField(formData, "supplier_id");
+  const item = normalizeSupplyItem(readField(formData, "supply_item"));
+  const quantity = toPositiveNumber(readField(formData, "quantity"));
+  const totalCost = toMoney(readField(formData, "total_cost"));
+  const note = toNullable(readField(formData, "note"));
+
+  if (!branchId) throw new Error("Branch is required");
+  if (!supplierId) throw new Error("Supplier is required");
+  if (item !== "dirtex" && item !== "perchlo") throw new Error("Only Dirtex and Perchlo can be received directly to branch");
+
+  const { data: receipt, error: receiptError } = await supabase.from("branch_direct_receipts").insert({
+    branch_id: branchId,
+    supplier_id: supplierId,
+    supply_item: item,
+    quantity,
+    total_cost: totalCost,
+    note,
+  }).select("id").single();
+
+  if (receiptError || !receipt) throw new Error(receiptError?.message ?? "Failed to save branch receipt");
+
+  const { data: branchLevel } = await supabase
+    .from("branch_supply_levels")
+    .select("quantity")
+    .eq("branch_id", branchId)
+    .eq("supply_item", item)
+    .maybeSingle();
+
+  const nextBranchQty = Number(branchLevel?.quantity ?? 0) + quantity;
+  const { error: branchUpdateError } = await supabase.from("branch_supply_levels").upsert({
+    branch_id: branchId,
+    supply_item: item,
+    quantity: nextBranchQty,
+  }, { onConflict: "branch_id,supply_item" });
+  if (branchUpdateError) throw new Error(branchUpdateError.message);
+
+  await supabase.from("branch_restock_logs").insert({
+    branch_id: branchId,
+    supply_item: item,
+    quantity,
+    source_type: "direct",
+    supplier_id: supplierId,
+    note,
+  });
+
+  await supabase.from("supply_movements").insert({
+    movement_type: "RECEIVE_TO_BRANCH",
+    supply_item: item,
+    qty_change: quantity,
+    from_location: "supplier",
+    to_location: `branch:${branchId}`,
+    supplier_id: supplierId,
+    branch_id: branchId,
+    related_table: "branch_direct_receipts",
+    related_id: receipt.id,
+    note,
+  });
+
+  refreshAdminPortal();
+}
+
 export async function branchRestockAction(formData: FormData) {
   await requireAdmin();
   const supabase = createSupabaseAdminClient();
@@ -640,6 +703,17 @@ export async function branchRestockAction(formData: FormData) {
 
   if (!branchId) throw new Error("Branch is required");
   if (item !== "hanger" && item !== "laundry_bag") throw new Error("Only hanger and laundry bag can move from storage");
+
+  if (requestId) {
+    const { data: request, error: requestError } = await supabase
+      .from("branch_supply_requests")
+      .select("id,status")
+      .eq("id", requestId)
+      .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Branch request not found");
+    if (request.status === "fulfilled") throw new Error("Request already fulfilled");
+  }
 
   const { data: storage, error: storageReadError } = await supabase
     .from("storage_supply_levels")
@@ -683,7 +757,7 @@ export async function branchRestockAction(formData: FormData) {
   if (logError || !restockLog) throw new Error(logError?.message ?? "Failed to log restock");
 
   await supabase.from("supply_movements").insert({
-    movement_type: "TRANSFER_TO_BRANCH",
+    movement_type: "STORAGE_TO_BRANCH",
     supply_item: item,
     qty_change: -quantity,
     from_location: "storage",
@@ -770,6 +844,52 @@ export async function createFinanceExpenseAction(formData: FormData) {
     supplier_id: toNullable(readField(formData, "supplier_id")),
     note: toNullable(readField(formData, "note")),
   });
+  refreshAdminPortal();
+}
+
+export async function createSupplierPaymentAction(formData: FormData) {
+  await requireAdmin();
+  const supabase = createSupabaseAdminClient();
+
+  const supplierId = readField(formData, "supplier_id");
+  const bankAccountId = readField(formData, "bank_account_id");
+  const amount = toMoney(readField(formData, "amount"));
+  const reference = toNullable(readField(formData, "reference"));
+  const notes = toNullable(readField(formData, "notes"));
+
+  if (!supplierId) throw new Error("Supplier is required");
+  if (!bankAccountId) throw new Error("Bank account is required");
+
+  const { data: account, error: accountError } = await supabase
+    .from("finance_accounts")
+    .select("id,type")
+    .eq("id", bankAccountId)
+    .single();
+  if (accountError) throw new Error(accountError.message);
+  if (account.type !== "bank") throw new Error("Supplier payments can only be made from bank accounts");
+
+  const { error: paymentError } = await supabase.from("supplier_payments").insert({
+    supplier_id: supplierId,
+    bank_account_id: bankAccountId,
+    amount,
+    paid_at: new Date().toISOString(),
+    reference,
+    notes,
+  });
+  if (paymentError) throw new Error(paymentError.message);
+
+  const { error: txnError } = await supabase.from("finance_transactions").insert({
+    txn_type: "expense",
+    direction: "out",
+    account_id: bankAccountId,
+    amount,
+    category: "supplier_payment",
+    supplier_id: supplierId,
+    note: notes ?? reference ?? "Supplier payment",
+  });
+
+  if (txnError) throw new Error(txnError.message);
+
   refreshAdminPortal();
 }
 

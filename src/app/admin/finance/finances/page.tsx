@@ -4,12 +4,13 @@ import {
   createFinanceAdjustmentAction,
   createFinanceExpenseAction,
   createFinanceReceiveAction,
+  createSupplierPaymentAction,
   updateFinanceAccountAction,
 } from "@/app/admin/actions";
 import { fetchAdminFinancesData } from "@/app/admin/data";
 
 export default async function AdminFinancesPage() {
-  const { accounts, balances, transactions, activeSuppliers } = await fetchAdminFinancesData();
+  const { accounts, balances, transactions, activeSuppliers, supplierBalances } = await fetchAdminFinancesData();
 
   const byType = (type: "cash" | "mpesa" | "bank") => balances.find((b) => b.type === type)?.balance ?? 0;
   const total = balances.reduce((sum, b) => sum + Number(b.balance), 0);
@@ -42,6 +43,27 @@ export default async function AdminFinancesPage() {
           <input name="note" placeholder="Note" className="rounded-md border border-slate-300 px-3 py-2 md:col-span-2" />
           <button className="rounded-md bg-[var(--brand-primary)] px-4 py-2 text-sm font-medium text-white md:col-span-3">Add Expense</button>
         </form>
+      </AdminPageSection>
+
+      <AdminPageSection title="Supplier payments" description="Record supplier payments from bank accounts only.">
+        <form action={createSupplierPaymentAction} className="grid gap-3 md:grid-cols-4">
+          <select name="supplier_id" required className="rounded-md border border-slate-300 px-3 py-2"><option value="">Supplier</option>{activeSuppliers.map((supplier)=><option key={supplier.id} value={supplier.id}>{supplier.company_name}</option>)}</select>
+          <select name="bank_account_id" required className="rounded-md border border-slate-300 px-3 py-2"><option value="">Bank account</option>{accounts.filter((a)=>a.is_active && a.type === "bank").map((account)=><option key={account.id} value={account.id}>{account.name}</option>)}</select>
+          <input name="amount" type="number" min={0.01} step={0.01} required placeholder="Amount" className="rounded-md border border-slate-300 px-3 py-2" />
+          <input name="reference" required placeholder="Reference" className="rounded-md border border-slate-300 px-3 py-2" />
+          <input name="notes" required placeholder="Notes" className="rounded-md border border-slate-300 px-3 py-2 md:col-span-3" />
+          <button className="rounded-md bg-[var(--brand-primary)] px-4 py-2 text-sm font-medium text-white md:col-span-1">Record payment</button>
+        </form>
+
+        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead className="bg-slate-100 text-slate-700"><tr><th className="border-b border-slate-200 px-3 py-2">Supplier</th><th className="border-b border-slate-200 px-3 py-2">Total Purchased</th><th className="border-b border-slate-200 px-3 py-2">Total Paid</th><th className="border-b border-slate-200 px-3 py-2">Balance</th></tr></thead>
+            <tbody>{activeSuppliers.map((supplier) => {
+              const balance = supplierBalances.find((item) => item.supplier_id === supplier.id);
+              return <tr key={supplier.id} className="odd:bg-white even:bg-slate-50/40"><td className="border-b border-slate-100 px-3 py-2">{supplier.company_name}</td><td className="border-b border-slate-100 px-3 py-2">KES {Number(balance?.total_purchased ?? 0).toFixed(2)}</td><td className="border-b border-slate-100 px-3 py-2">KES {Number(balance?.total_paid ?? 0).toFixed(2)}</td><td className="border-b border-slate-100 px-3 py-2">KES {Number(balance?.balance ?? 0).toFixed(2)}</td></tr>;
+            })}</tbody>
+          </table>
+        </div>
       </AdminPageSection>
 
       <AdminPageSection title="Account management" description="Create, edit, deactivate accounts and set opening balances via adjustments.">
