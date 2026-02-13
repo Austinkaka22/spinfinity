@@ -248,6 +248,13 @@ export type FinanceAccount = {
   is_active: boolean;
 };
 
+export type SupplierBalance = {
+  supplier_id: string;
+  total_purchased: number;
+  total_paid: number;
+  balance: number;
+};
+
 export type FinanceBalance = {
   account_id: string;
   name: string;
@@ -272,7 +279,7 @@ export async function fetchAdminSupplierReceipts() {
 
 export async function fetchAdminFinancesData() {
   const supabase = createSupabaseAdminClient();
-  const [accountsRes, balancesRes, txnsRes, suppliersRes] = await Promise.all([
+  const [accountsRes, balancesRes, txnsRes, suppliersRes, supplierBalancesRes] = await Promise.all([
     supabase.from("finance_accounts").select("*").order("name"),
     supabase.from("v_finance_account_balances").select("*"),
     supabase
@@ -281,6 +288,7 @@ export async function fetchAdminFinancesData() {
       .order("created_at", { ascending: false })
       .limit(20),
     supabase.from("suppliers").select("id,company_name,is_active").eq("is_active", true).order("company_name"),
+    supabase.from("v_supplier_balances").select("*"),
   ]);
 
   return {
@@ -288,5 +296,11 @@ export async function fetchAdminFinancesData() {
     balances: ((balancesRes.data ?? []) as FinanceBalance[]).map((row) => ({ ...row, balance: Number(row.balance) })),
     transactions: (txnsRes.data ?? []) as Array<Record<string, unknown>>,
     activeSuppliers: (suppliersRes.data ?? []) as Array<Pick<Supplier, "id" | "company_name" | "is_active">>,
+    supplierBalances: ((supplierBalancesRes.data ?? []) as SupplierBalance[]).map((row) => ({
+      ...row,
+      total_purchased: Number(row.total_purchased),
+      total_paid: Number(row.total_paid),
+      balance: Number(row.balance),
+    })),
   };
 }

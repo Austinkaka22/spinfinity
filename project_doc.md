@@ -137,8 +137,11 @@ Source Inputs:
 - Till/float and deposit confirmation.
 - Expense approvals above 5,000 KES.
 - Inventory movements (bags, Perchlo, Dirtex).
+- Inventory stock movement UX constrained to Receive to Storage + Receive to Branch.
+- Branch request fulfillment via Transfer from Storage with idempotent protection.
+- Supplier payments from bank accounts and supplier balance view.
 ### Status
-- Pending.
+- In progress.
 
 ---
 
