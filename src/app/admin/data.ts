@@ -219,6 +219,17 @@ export type Supplier = {
   created_at: string;
 };
 
+export type SupplierReceipt = {
+  id: string;
+  supplier_id: string;
+  supply_item: "dirtex" | "perchlo" | "laundry_bag" | "hanger";
+  quantity: number;
+  unit_cost: number | null;
+  total_cost: number | null;
+  note: string | null;
+  created_at: string;
+};
+
 export type BranchSupplyRequest = {
   id: string;
   branch_id: string;
@@ -248,6 +259,15 @@ export async function fetchAdminSuppliers() {
   const supabase = createSupabaseAdminClient();
   const res = await supabase.from("suppliers").select("*").order("created_at", { ascending: false });
   return (res.data ?? []) as Supplier[];
+}
+
+export async function fetchAdminSupplierReceipts() {
+  const supabase = createSupabaseAdminClient();
+  const res = await supabase
+    .from("storage_receipts")
+    .select("id,supplier_id,supply_item,quantity,unit_cost,total_cost,note,created_at")
+    .order("created_at", { ascending: false });
+  return (res.data ?? []) as SupplierReceipt[];
 }
 
 export async function fetchAdminFinancesData() {
